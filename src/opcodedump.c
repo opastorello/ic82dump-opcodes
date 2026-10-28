@@ -2,14 +2,17 @@
   +----------------------------------------------------------------------+
   | opcodedump extension - ionCube 15.5.1 opcode dumper (x86)            |
   +----------------------------------------------------------------------+
-  | Target PHP    : 8.5 NTS Win32 VS16 x86                               |
-  | Target loader : ioncube_loader_win_8.1.dll                           |
+  | Target PHP    : 8.2 NTS Win32 VS16 x86                               |
+  | Target loader : ioncube_loader_win_8.2.dll                           |
   |                 (ionCube PHP Loader 15.5.1, ImageBase                |
   |                  0x10000000 typical; verify in IDA)                   |
   |                                                                      |
-  | Loader RVAs (binary analysis of ionCube 15.5.1, used at runtime):   |
-  |   IC_VM_LOOP_RVA     = 0x6FDC0  (FUN_1006FDC0: loader VM dispatch)   |
-  |   IC_REQUEST_KEY_RVA = 0xB01C8  (dword_101B01C8: per-request XOR key) |
+  | Loader RVAs (binary analysis of ionCube 15.5.1, PHP 8.2 NTS):         |
+  |   IC_VM_LOOP_RVA            = 0x73900  (FUN_10073900: loader VM dispatch) |
+  |   IC_OPCODE_CAPTURE_RVA     = 0x739E4  (cmp/jl inside VM loop: opcode dispatch) |
+  |   IC_HANDLER_ENC_XOR_RVA    = 0x739DC  (XOR EDX,ECX inside VM loop: decode) |
+  |   IC_REQUEST_KEY_RVA        = 0xB01C8  (dword_101B01C8: per-request XOR key) |
+  |   IC_HANDLER_ENC_JZ_RVA     = 0x754B6  (JZ inside FUN_100754A0: skip decode) |
   |                                                                      |
   | ionCube 15.5.1 zend_op_array x86 offsets:                            |
   |   [+0x30]=last  [+0x34]=opcodes*  [+0x5C]=filename* (XOR key salt)   |
@@ -17,7 +20,7 @@
   |   [+0x88]=reserved[3] (ionCube descriptor pointer)                   |
   |                                                                      |
   | Full-opcode recovery: the loader runs encoded functions through its  |
-  | own VM loop (sub_1006FF10), bypassing zend_execute_ex, and stores a  |
+  | own VM loop (FUN_10073900), bypassing zend_execute_ex, and stores a  |
   | permuted opline->opcode (dispatch is via the handler). We drive each |
   | functions through the loader VM (body skipped for safety). The top   |
   | level {main} is materialized through the loader's op_array decoder,  |
@@ -54,7 +57,7 @@ static int dasm_ic_committed_readable_ptr(const void *ptr);
 # define TSRMLS_D void
 #endif
 #ifndef IC_LOADER_NAME
-#define IC_LOADER_NAME     "ioncube_loader_win_8.1.dll"
+#define IC_LOADER_NAME     "ioncube_loader_win_8.2.dll"
 #endif
 
 void dasm_zend_op_array(zval *dst, const zend_op_array *src);
@@ -594,13 +597,13 @@ static void dasm_add_cv_name(zval *dst, const char *key,
 #define IC_REQUEST_KEY_RVA 0xB01C8u  /* 15.5.1: dword_101B01C8 (per-request XOR key) */
 #endif
 #ifndef IC_STEP1_RVA
-#define IC_STEP1_RVA 0x2C40u  /* FUN_10002C40: materialize an encoded op_array body (15.5.1) */
+#define IC_STEP1_RVA 0x2C30u  /* FUN_10002C30: materialize an encoded op_array body (15.5.1) */
 #endif
 #ifndef IC_OPCODE_SETTER_RVA
-#define IC_OPCODE_SETTER_RVA 0x7100u  /* FUN_10070100: handler opcode setter (15.5.1) */
+#define IC_OPCODE_SETTER_RVA 0x754A0u  /* FUN_100754A0: handler opcode setter (15.5.1) */
 #endif
 #ifndef IC_DESCRIPTOR_PREPROCESS_PATCH_RVA
-#define IC_DESCRIPTOR_PREPROCESS_PATCH_RVA 0x6CB90u  /* FUN_1006CB90: descriptor preprocess (15.5.1) */
+#define IC_DESCRIPTOR_PREPROCESS_PATCH_RVA 0x753B0u  /* FUN_100753B0: descriptor preprocess (15.5.1) */
 #endif
 #define IC_DESC_MAP_MAX 4096
 #define OPCODEDUMP_DESCRIPTOR_SAVE_MAX 512
@@ -3294,7 +3297,7 @@ void dasm_zend_op_array(zval *dst, const zend_op_array *src)
 /* ============================================================
  * ionCube force-decode  (Windows only)
  * ============================================================
- * PHP 8.5 loader (ioncube_loader_win_8.1.dll) - confirmed by binary analysis.
+ * PHP 8.2 loader (ioncube_loader_win_8.2.dll) - confirmed by binary analysis.
  * At encode time ionCube:
  *    - XOR-encodes op_array->opcodes into descriptor[5]
  *    - replaces opcodes with a small odd sentinel
@@ -3564,14 +3567,15 @@ static int opcodedump_install_ic_descriptor_hook(void)
 }
 
 /* ============================================================
- * Materializer opcode capture
+ * Opcode capture via VM loop cmp/jl dispatch
  * ============================================================
- * sub_1009B3C0 builds transient zend_op buffers and then sets each handler.
- * At RVA 0x9BD20, CH contains the real Zend opcode byte for the current
- * opline, and [esp+2c] is the current zend_op*. Capture that pair before the
- * loader branches to either sub_100701D0 or sub_10070170. */
+ * ionCube 15.5.1 PHP 8.2: the VM loop at RVA 0x73900 contains the
+ * opcode dispatch at RVA 0x739E4: cmp [eax+10h], 6; jl <branch>.
+ * CH holds the real Zend opcode byte; [esp+2c] (after pushfd/pushad)
+ * holds the current zend_op*. Capture the pair before the loader
+ * branches to the encode-path or the jump-table entry points. */
 #ifndef IC_OPCODE_CAPTURE_LOOP_RVA
-#define IC_OPCODE_CAPTURE_LOOP_RVA 0x9BD20u
+#define IC_OPCODE_CAPTURE_LOOP_RVA 0x739E4u
 #endif
 static unsigned char *opcodedump_opcode_capture_target = NULL;
 static unsigned char opcodedump_opcode_capture_original[6];
@@ -3592,16 +3596,16 @@ __declspec(naked) static void opcodedump_opcode_capture_loop_hook(void)
 
 		/* relocated original bytes:
 		 *   cmp dword ptr [eax+10h], 6
-		 *   jl  1009BD46
+		 *   jl  73A04  (php 8.2: jl target after cmp/jl)
 		 */
 		cmp  DWORD PTR [eax+10h], 6
 		jl   capture_loop_lt6
 		mov  eax, DWORD PTR [opcodedump_loader_base_cached]
-		add  eax, 9BD26h
+		add  eax, 739EAh
 		jmp  eax
 	capture_loop_lt6:
 		mov  eax, DWORD PTR [opcodedump_loader_base_cached]
-		add  eax, 9BD46h
+		add  eax, 73A04h
 		jmp  eax
 	}
 }
@@ -3612,7 +3616,7 @@ static int opcodedump_install_opcode_capture_hook(void)
 	unsigned char *target;
 	DWORD old_protect, tmp_protect;
 	intptr_t rel;
-	static const unsigned char expect[6] = { 0x83, 0x78, 0x10, 0x06, 0x7C, 0x20 };
+	static const unsigned char expect[6] = { 0x83, 0x78, 0x10, 0x06, 0x7C, 0x14 };
 
 	if (opcodedump_opcode_capture_hook_installed) return 1;
 	hLoader = GetModuleHandleA(IC_LOADER_NAME);
@@ -3636,10 +3640,11 @@ static int opcodedump_install_opcode_capture_hook(void)
 	return 1;
 }
 
-/* Direct setter hook: sub_10070100(ecx=zend_op*, dl=real_opcode). This catches
- * materialization paths that do not pass through the 0x9BD20 loop probe. */
+/* Direct setter hook: FUN_10073BD0(ecx=zend_op*, dl=real_opcode). This catches
+ * materialization paths that do not pass through the 0x739E4 cmp/jl probe.
+ * Entry bytes: movzx eax, dl; push esi; push edi (0F B6 C2 56 57). */
 #ifndef IC_OPCODE_SETTER_RVA
-#define IC_OPCODE_SETTER_RVA 0x7100u
+#define IC_OPCODE_SETTER_RVA 0x73BD0u
 #endif
 static unsigned char *opcodedump_opcode_setter_target = NULL;
 static unsigned char opcodedump_opcode_setter_original[5];
@@ -3666,7 +3671,7 @@ __declspec(naked) static void opcodedump_opcode_setter_hook(void)
 		push esi
 		push edi
 		mov  edi, DWORD PTR [opcodedump_loader_base_cached]
-		add  edi, 701D5h
+		add  edi, 73BD5h
 		jmp  edi
 	}
 }
@@ -3704,13 +3709,13 @@ static int opcodedump_install_opcode_setter_hook(void)
  * Runtime opcode capture (ionCube VM dispatch detour)
  * ============================================================
  * The v15.5/8.5 loader executes encoded user functions through its OWN VM loop
- * (sub_1006FDC0), bypassing zend_execute_ex entirely, and only materializes the
+ * (FUN_10073900), bypassing zend_execute_ex entirely, and only materializes the
  * decrypted opcode stream during that dispatch. We detour the VM loop entry: at
  * that point op_array->opcodes (and desc[15]) hold the decrypted opcodes
  * (plaintext operands; handlers are still XOR-encrypted, which the dump does not
  * need). We snapshot there so the body never has to complete. */
 #ifndef IC_VM_LOOP_RVA
-#define IC_VM_LOOP_RVA 0x6FDC0u
+#define IC_VM_LOOP_RVA 0x73900u
 #endif
 static unsigned char *opcodedump_vm_loop_target = NULL;
 static unsigned char opcodedump_vm_loop_original[6];
@@ -3840,7 +3845,7 @@ __declspec(naked) static void opcodedump_vm_loop_hook(void)
 		push ebx
 		mov  ebx, ecx
 		mov  eax, DWORD PTR [opcodedump_loader_base_cached]
-		add  eax, 6FF16h          /* sub_1006FF10 + 6 */
+		add  eax, 73906h          /* VM loop entry + 6 (8.2: RVA 0x73900 + 6) */
 		jmp  eax
 	}
 }
@@ -3870,20 +3875,26 @@ static int opcodedump_install_vm_loop_hook(void)
 	return 1;
 }
 
-/* The opcode materializer (sub_1009B3C0) sets each opline->handler to the real
- * php8.dll handler, then XOR-encrypts it with a per-opcode key:
- *     1009bd4e  call sub_100701D0      ; opline->handler = real handler
- *     ...
- *     1009bd6f  xor  [esi], ecx        ; *handler ^= key[index]*0x01010101
- * NOPping that 2-byte XOR leaves the real handler in the materialized buffer, so
- * the snapshot's handler->opcode map yields the true opcode directly. Execution
- * of those functions would then mismatch the dispatch-side XOR - harmless here
- * because the VM-loop detour skips the body during materialization. */
+/* The opcode materializer (FUN_10002C30) sets each opline->handler to the real
+ * php8.2.dll handler, then XOR-encrypts it with a per-opcode key.
+ * The VM loop (FUN_10073900) at RVA 0x73900 decodes opcodes via XOR at
+ *     100739dc  xor  edx, ecx          ; decoded_op = raw_op ^ key
+ * The handler setter (FUN_100754A0) at RVA 0x754A0 checks bytecode version:
+ *     100754a5  cmp byte ptr [esi], 2
+ *     100754a9  jnz  skip_decode
+ *     100754af  test [esi+4], 40000000h
+ *     100754b6  jz   skip_decode            ; branch 2: skip XOR for encoded
+ *     100754b8  mov  ecx, esi
+ *     100754ba  call 00002C30                 ; materialize
+ * NOPping the XOR (branch 1) and the JZ (branch 2) leaves real handlers in
+ * the materialized buffer, so the snapshot's handler->opcode map yields the
+ * true opcode directly. Execution of those functions then mismatches the
+ * dispatch-side XOR - harmless because the VM-loop detour skips the body. */
 #ifndef IC_HANDLER_ENC_XOR_RVA
-#define IC_HANDLER_ENC_XOR_RVA 0x9BD6Fu   /* sub_1009B3C0: xor [esi],ecx (branch 1) */
+#define IC_HANDLER_ENC_XOR_RVA 0x739DCu   /* RVA inside FUN_10073900: XOR EDX,ECX (branch 1, opcode decode) */
 #endif
 #ifndef IC_HANDLER_ENC_JZ_RVA
-#define IC_HANDLER_ENC_JZ_RVA  0x70188u   /* sub_10070170: jz to real-handler path (branch 2) */
+#define IC_HANDLER_ENC_JZ_RVA  0x754B6u   /* RVA inside FUN_100754A0: jz to real-handler path (branch 2) */
 #endif
 static int opcodedump_handler_enc_patched = 0;
 
@@ -3909,12 +3920,12 @@ static int opcodedump_patch_one(uintptr_t rva, const unsigned char *expect, cons
 
 static int opcodedump_patch_disable_handler_encryption(void)
 {
-	/* Neutralize both opline->handler encryption sites in the materializer so the
+	/* Neutralize both opline->handler encryption sites in the PHP 8.2 loader so the
 	 * real php8.dll handler stays in the materialized opcode buffer:
-	 *   branch 1 (sub_1009B3C0): NOP the `xor [esi],ecx`        (31 0E -> 90 90)
-	 *   branch 2 (sub_10070170): force the real-handler path    (74 2F -> EB 2F) */
-	static const unsigned char xor_from[2] = { 0x31, 0x0E }, xor_to[2] = { 0x90, 0x90 };
-	static const unsigned char jz_from[2]  = { 0x74, 0x2F }, jz_to[2]  = { 0xEB, 0x2F };
+	 *   branch 1 (FUN_10073900 VM loop): NOP the `xor edx,ecx`     (31 D2 -> 90 90)
+	 *   branch 2 (FUN_100754A0 handler setter): force real path  (74 4C -> EB 4C) */
+	static const unsigned char xor_from[2] = { 0x31, 0xD2 }, xor_to[2] = { 0x90, 0x90 };
+	static const unsigned char jz_from[2]  = { 0x74, 0x4C }, jz_to[2]  = { 0xEB, 0x4C };
 	int ok_xor, ok_jz;
 	if (opcodedump_handler_enc_patched) return 1;
 	ok_xor = opcodedump_patch_one(IC_HANDLER_ENC_XOR_RVA, xor_from, xor_to, 2);
