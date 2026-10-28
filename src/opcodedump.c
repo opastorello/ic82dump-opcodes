@@ -2534,22 +2534,43 @@ static void inline dasm_zend_class_entry(zval *dst, zend_class_entry *src)
 		add_assoc_long(dst, "name_len", ZSTR_LEN(src->name));
 	}
 
-	/* parent: may be unresolved/dangling if parent class wasn't found */
+	/* parent: may be unresolved/dangling if parent class wasn't found
+	 * ZEND_ACC_LINKED (0x8) indicates if the class is linked:
+	 * - If NOT linked: src->parent is actually zend_string* (parent_name)
+	 * - If linked: src->parent is zend_class_entry* (need to read ->name)
+	 */
 #ifdef PHP_WIN32
 	{
 		const char *_pname = NULL;
 		size_t _pname_len = 0;
+		int is_linked = (src->ce_flags & 0x8) != 0;  /* ZEND_ACC_LINKED = (1 << 3) = 0x8 */
 		__try {
-			if (src->parent &&
-			    dasm_ic_committed_readable_ptr(src->parent) &&
-			    src->parent->name &&
-			    dasm_ic_committed_readable_ptr(src->parent->name)) {
-				_pname = ZSTR_VAL(src->parent->name);
-				_pname_len = ZSTR_LEN(src->parent->name);
-				if (_pname_len > 4096 ||
-				    !dasm_ic_committed_readable_ptr(_pname) ||
-				    !dasm_ic_committed_readable_ptr(_pname + _pname_len)) {
-					_pname = NULL;
+			if (src->parent) {
+				if (!is_linked) {
+					/* Class not linked: src->parent is actually parent_name (zend_string*) */
+					zend_string *parent_name = (zend_string *)src->parent;
+					if (dasm_ic_committed_readable_ptr(parent_name)) {
+						_pname = ZSTR_VAL(parent_name);
+						_pname_len = ZSTR_LEN(parent_name);
+						if (_pname_len > 4096 ||
+						    !dasm_ic_committed_readable_ptr(_pname) ||
+						    !dasm_ic_committed_readable_ptr(_pname + _pname_len)) {
+							_pname = NULL;
+						}
+					}
+				} else {
+					/* Class is linked: src->parent is zend_class_entry*, read ->name */
+					if (dasm_ic_committed_readable_ptr(src->parent) &&
+					    src->parent->name &&
+					    dasm_ic_committed_readable_ptr(src->parent->name)) {
+						_pname = ZSTR_VAL(src->parent->name);
+						_pname_len = ZSTR_LEN(src->parent->name);
+						if (_pname_len > 4096 ||
+						    !dasm_ic_committed_readable_ptr(_pname) ||
+						    !dasm_ic_committed_readable_ptr(_pname + _pname_len)) {
+							_pname = NULL;
+						}
+					}
 				}
 			}
 		} __except(EXCEPTION_EXECUTE_HANDLER) { _pname = NULL; }
@@ -2560,10 +2581,20 @@ static void inline dasm_zend_class_entry(zval *dst, zend_class_entry *src)
 		}
 	}
 #else
-	if (src->parent) {
-		add_assoc_string(dst, "parent", ZSTR_VAL(src->parent->name));
-	} else {
-		add_assoc_null_ex(dst, ("parent"), (sizeof("parent")));
+	{
+		int is_linked = (src->ce_flags & 0x8) != 0;
+		if (src->parent) {
+			if (!is_linked) {
+				/* Not linked: parent is parent_name (zend_string*) */
+				zend_string *parent_name = (zend_string *)src->parent;
+				add_assoc_string(dst, "parent", ZSTR_VAL(parent_name));
+			} else {
+				/* Linked: parent is zend_class_entry* */
+				add_assoc_string(dst, "parent", ZSTR_VAL(src->parent->name));
+			}
+		} else {
+			add_assoc_null_ex(dst, ("parent"), (sizeof("parent")));
+		}
 	}
 #endif
 
