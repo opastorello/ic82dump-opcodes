@@ -1,4 +1,4 @@
-# ionCube 15.5.1 Opcode Dumper (PHP 8.5 Loader)
+# ionCube 15.5.1 Opcode Dumper (PHP 8.2 Loader)
 
 This repository contains a Windows x86 PHP extension and a PHP-side export
 pipeline that captures complete Zend opcode arrays from ionCube-encoded PHP
@@ -7,10 +7,10 @@ files.
 The implementation is intentionally tied to the exact runtime bundled in this
 repository:
 
-- PHP 8.5 (NTS), Visual C++ 2019 (VS16), x86
-- Zend Engine 8.5
+- PHP 8.2 (NTS), Visual C++ 2019 (VS16), x86
+- Zend Engine 8.2
 - ionCube PHP Loader 15.5.1
-- `runtime/ext/ioncube_loader_win_8.1.dll`
+- `runtime/ext/ioncube_loader_win_8.2.dll`
 - `runtime/ext/php_opcodedump.dll`
 
 The purpose of this project is to produce a complete and accurate opcode dump
@@ -30,21 +30,21 @@ Use this tooling only with files that you are authorized to inspect.
 The loader-specific RVAs documented below were identified in:
 
 ```text
-runtime/ext/ioncube_loader_win_8.1.dll
+runtime/ext/ioncube_loader_win_8.2.dll
 ionCube PHP Loader 15.5.1 15.5.0
-SHA-256: 0954297f4299fbcc2dcbcf0e26e4d9fd90aa54b2bada662e02983a6d1200cdef
+SHA-256: 0638421198356b0b99d35c1d013ceca5dd035b1868156df33841fcf87aa7c06b
 ```
 
 The loader filename alone is not sufficient to identify the analyzed build.
 The RVAs and instruction sequences in this document apply to the exact SHA-256
-above; another `ioncube_loader_win_8.1.dll` may have different code at the same
+above; another `ioncube_loader_win_8.2.dll` may have different code at the same
 addresses.
 
 The bundled runtime uses:
 
 ```text
 runtime/php.exe
-PHP 8.1.34 NTS x86
+PHP 8.2.x NTS x86
 ```
 
 The opcode dumper extension is loaded from:
@@ -58,7 +58,7 @@ an address as:
 
 ```c
 absolute_address = (uintptr_t)GetModuleHandleA(
-    "ioncube_loader_win_8.1.dll"
+    "ioncube_loader_win_8.2.dll"
 ) + rva;
 ```
 
@@ -234,7 +234,7 @@ On this x86 runtime, one opcode record is exactly 28 bytes (`0x1C`):
 The size is visible directly in the loader VM loop:
 
 ```asm
-; sub_1006FF10
+; FUN_10073900
 sub eax, opcodes_base
 imul/sar ...                 ; divide by 28
 ```
@@ -242,7 +242,7 @@ imul/sar ...                 ; divide by 28
 It is also visible in the materializer:
 
 ```asm
-1009BD72  add esi, 1Ch       ; advance to the next zend_op
+100739dc  add esi, 1Ch       ; inside VM loop: advance to the next zend_op
 ```
 
 ### `znode_op`
@@ -347,7 +347,7 @@ different address spaces and lifetimes.
 
 | Pointer class | Example | Validation and use |
 |---|---|---|
-| Loader code | `loader_base + 0x701D0` | must be inside the loaded PE image; used for hooks and loader-handler matching |
+| Loader code | `loader_base + 0x73BD0` | must be inside the loaded PE image; used for hooks and loader-handler matching |
 | Zend structure | `zend_op_array *`, `zend_class_entry *` | must point to committed readable memory and pass type/count checks |
 | Loader descriptor | `op_array->reserved[3]` | must be readable before any `desc[n]` access |
 | Transient data | `desc[15]`, materialized `opcodes`, `literals` | must be aligned, readable, bounded, and copied immediately |
@@ -390,7 +390,7 @@ The loader was opened in IDA with image base:
 The runtime code stores RVAs, not absolute IDA addresses. For example:
 
 ```text
-IDA address 0x1006FF10 -> runtime RVA 0x6FF10
+IDA address 0x10073900 -> runtime RVA 0x73900
 ```
 
 ### Investigation workflow used in IDA
@@ -418,12 +418,12 @@ The decisive register states were:
 
 | IDA location | Register or stack value | Meaning |
 |---|---|---|
-| `0x10002C40` | `ECX` | encoded `zend_op_array *` passed to the direct materializer |
-| `0x1009BD20` | `CH` | real Zend opcode byte being materialized |
-| `0x1009BD20` | `[ESP+0x2C]` | current transient `zend_op *` |
-| `0x10070100` | `ECX` | current `zend_op *` passed to the handler setter |
-| `0x10070100` | `DL` | real Zend opcode passed to the handler setter |
-| `0x1006FDC0` | `ECX` | `zend_execute_data *` at loader VM entry |
+| `0x10002C30` | `ECX` | encoded `zend_op_array *` passed to the direct materializer |
+| `0x100739E4` | `CH` | real Zend opcode byte being materialized |
+| `0x100739E4` | `[ESP+0x2C]` | current transient `zend_op *` |
+| `0x10073BD0` | `ECX` | current `zend_op *` passed to the handler setter |
+| `0x10073BD0` | `DL` | real Zend opcode passed to the handler setter |
+| `0x10073900` | `ECX` | `zend_execute_data *` at loader VM entry |
 
 This register-level agreement between caller, callee, and dispatch loop is what
 made the hook locations authoritative. A byte pattern alone was not treated as
@@ -439,7 +439,7 @@ The most useful initial search was for code that simultaneously:
 - writes `op_array + 0x30`;
 - clears the `0x400000` marker.
 
-That leads to `sub_10071660`:
+That leads to `FUN_10071660` (comment-only in 8.2):
 
 ```asm
 10071666  mov edi, [esi+88h]             ; reserved[3]
@@ -492,18 +492,18 @@ This analysis established:
 
 ### 2. Finding the direct op-array materializer
 
-`sub_10002C50`, RVA `0x2C50`, begins with:
+`FUN_10002C30`, RVA `0x2C30`, begins with:
 
 ```asm
-10002C50  sub esp,14h
-10002C53  mov eax,dword_101B00E0
-10002C58  push ebx
-10002C59  push ebp
-10002C5A  push esi
-10002C5B  push edi
-10002C5C  mov edi,ecx
+10002C30  sub esp,14h
+10002C33  mov eax,dword_101B00E0
+10002C38  push ebx
+10002C39  push ebp
+10002C3A  push esi
+10002C3B  push edi
+10002C3C  mov edi,ecx
 ...
-10002C66  mov eax,[edi+88h]               ; oa->reserved[3]
+10002C46  mov eax,[edi+88h]               ; oa->reserved[3]
 ```
 
 IDA shows:
@@ -535,31 +535,31 @@ match the analyzed loader.
 
 ### 3. Finding where the real opcode byte exists
 
-`sub_1009B3C0`, RVA `0x9B3C0`, builds transient `zend_op` records.
+`FUN_1009BD00`, RVA `0x9BD00`, builds transient `zend_op` records.
 
-The key loop is around RVA `0x9BD20`:
+The key loop is inside the VM loop at RVA `0x739E4`:
 
 ```asm
-1009BD20  cmp dword ptr [eax+10h],6
-1009BD24  jl  short 1009BD46
+100739E4  cmp dword ptr [eax+10h],6
+100739E9  jl  short 100739F8
 ...
-1009BD46  mov esi,[esp+2Ch]                ; current zend_op *
-1009BD4A  mov dl,ch                        ; real Zend opcode byte
-1009BD4C  mov ecx,esi                      ; current zend_op *
-1009BD4E  call sub_100701D0                ; install handler
+100739F8  mov esi,[esp+2Ch]                ; current zend_op *
+100739FB  mov dl,ch                        ; real Zend opcode byte
+100739FD  mov ecx,esi                      ; current zend_op *
+100739FF  call FUN_10073BD0                ; install handler
 ...
-1009BD6F  xor [esi],ecx                    ; encrypt handler pointer
-1009BD72  add esi,1Ch                      ; next zend_op
+10073A1C  xor edx,ecx                      ; encrypt handler pointer (inside VM loop)
+100739dc  add esi,1Ch                      ; next zend_op
 ```
 
 At this point:
 
 - `CH` contains the real opcode byte;
 - `[ESP+0x2C]` contains the current `zend_op *`;
-- `sub_100701D0` selects and writes the handler;
+- `FUN_10073BD0` selects and writes the handler;
 - the handler may then be XOR-transformed.
 
-The dumper installs a hook at RVA `0x9BD20` and records:
+The dumper installs a hook at RVA `0x739E4` and records:
 
 ```c
 map[current_opline_pointer] = real_opcode;
@@ -569,7 +569,7 @@ The map uses open addressing and stores the pointer, opcode byte, and hit count.
 
 ### 4. Understanding the opcode setter
 
-`sub_100701D0`, RVA `0x701D0`, receives:
+`FUN_10073BD0`, RVA `0x73BD0`, receives:
 
 ```text
 ECX = zend_op *
@@ -619,31 +619,31 @@ Two materializer paths can transform the selected handler pointer.
 The first path is visible at:
 
 ```asm
-1009BD4E  call sub_100701D0
+100739FF  call FUN_10073BD0
 ...
-1009BD6F  xor [esi],ecx
+10073A1C  xor edx,ecx
 ```
 
-The second path is in `sub_10070170`:
+The second path is inside the handler setter at `FUN_100754A0`:
 
 ```asm
-10070184  test byte ptr [esi+4],80h
-10070188  jz short real_handler_path
+100754AF  test byte ptr [esi+4],80h
+100754B6  jz short real_handler_path
 ...
-100701AF  xor edx,[eax+ecx*4]
-100701B2  mov [edi],edx
+100754BE  xor edx,[eax+ecx*4]
+100754C1  mov [edi],edx
 ...
 real_handler_path:
-100701C1  mov eax,[eax+ecx*4]
-100701C4  mov [edi],eax
+100754C7  mov eax,[eax+ecx*4]
+100754CA  mov [edi],eax
 ```
 
 During deliberate materialization, the extension neutralizes both encryption
 sites:
 
 ```text
-RVA 0x9BD6F: 31 0E -> 90 90
-RVA 0x70188: 74 2F -> EB 2F
+RVA 0x739DC: 31 D2 -> 90 90
+RVA 0x754B6: 74 4C -> EB 4C
 ```
 
 This leaves the real handler pointer in the transient opcode buffer.
@@ -654,7 +654,7 @@ executed as application code.
 
 ### 6. Finding the loader VM loop
 
-`sub_1006FF10`, RVA `0x6FF10`, is the loader's opcode dispatch loop.
+`FUN_10073900`, RVA `0x73900`, is the loader's opcode dispatch loop.
 
 Important IDA pseudocode:
 
@@ -681,14 +681,14 @@ for (;;) {
 The real code contains:
 
 ```asm
-1006FF21  mov ebp,[ebx+0Ch]                ; execute_data->func
-1006FF24  mov ecx,[ebp+88h]                ; reserved[3]
+1007390e  mov ebp,[ebx+0Ch]                ; execute_data->func
+10073911  mov ecx,[ebp+88h]                ; reserved[3]
 ...
-1006FF7E  xor eax,eax
-1006FF90  ...                              ; / 28 -> opcode index
-1006FF92  mov edx,[current_opline]          ; handler
+1007396e  xor eax,eax
+10073970  ...                              ; / 28 -> opcode index
+10073973  mov edx,[current_opline]          ; handler
 ...
-1006FFF0  call edx                          ; dispatch handler
+100739f0  call edx                          ; dispatch handler
 ```
 
 This proved three important facts:
@@ -739,10 +739,10 @@ The main hooks are:
 
 | Hook | RVA | Purpose |
 |---|---:|---|
-| Descriptor preprocessing | `0x6CB90` | observe module function/class entries |
-| Materializer opcode loop | `0x9BD20` | capture `(zend_op *, real opcode)` |
-| Direct opcode setter | `0x7100` | capture setter calls and provide handler oracle |
-| Loader VM loop | `0x6FDC0` | snapshot a fully materialized function and skip its body |
+| Descriptor preprocessing | `0x753B0` | observe module function/class entries |
+| Materializer opcode loop | `0x739E4` | capture `(zend_op *, real opcode)` |
+| Direct opcode setter | `0x73BD0` | capture setter calls and provide handler oracle |
+| Loader VM loop | `0x73900` | snapshot a fully materialized function and skip its body |
 
 Hook installation follows this pattern:
 
@@ -785,7 +785,7 @@ The exact sequence is:
    - user function/op-array;
    - readable `reserved[3]`;
    - odd/sentinel opcode pointer or marker bits in `line_end`.
-2. Verify the `sub_10002C50` byte signature.
+2. Verify the `FUN_10002C30` byte signature.
 3. Register a snapshot entry.
 4. Copy the entire original `zend_op_array` structure.
 5. Call the loader materializer with the op-array in `ECX`.
@@ -909,29 +909,29 @@ The resolved path is target-scoped:
 
 ### IDA-verified dynamic-key path
 
-The following locations were verified against the bundled PHP 8.1 loader whose
+The following locations were verified against the bundled PHP 8.2 loader whose
 SHA-256 is recorded in Runtime Setup:
 
 | IDA VA | RVA | Function/instruction | Observed role |
 |---:|---:|---|---|
-| `0x10002C50` | `0x2C50` | `sub_10002C50` | direct op-array materializer and dynamic-key gate |
-| `0x10002C71` | `0x2C71` | `mov esi,[eax+4Ch]` | loads the per-function record from `desc[19]` |
-| `0x10002CB9` | `0x2CB9` | `cmp byte ptr [esi+18h],0` | tests the dynamic-key marker at `record + 0x18` |
-| `0x10002CF5` | `0x2CF5` | `call sub_10003860` | enters the dynamic-key preparation/resolution branch |
-| `0x10002D71` | `0x2D71` | `mov byte ptr [esi+18h],0` | clears the marker after successful key processing |
-| `0x10002DC5` | `0x2DC5` | `mov eax,[esi+40h]` / `call eax` | invokes the record's final materialization callback |
-| `0x10071660` | `0x71660` | `sub_10071660` | restores `opcodes`, `last`, and `desc[15]` from the loader descriptor |
-| `0x10071750` | `0x71750` | `sub_10071750` | lazy execution wrapper around materialization, restore, static variables, and VM entry |
-| `0x1006FF10` | `0x6FF10` | `sub_1006FF10` | loader VM-loop entry used by the capture hook |
+| `0x10002C30` | `0x2C30` | `FUN_10002C30` | direct op-array materializer and dynamic-key gate |
+| `0x10002C51` | `0x2C51` | `mov esi,[eax+4Ch]` | loads the per-function record from `desc[19]` |
+| `0x10002C99` | `0x2C99` | `cmp byte ptr [esi+18h],0` | tests the dynamic-key marker at `record + 0x18` |
+| `0x10002CD5` | `0x2CD5` | `call FUN_1000380A` | enters the dynamic-key preparation/resolution branch |
+| `0x10002D51` | `0x2D51` | `mov byte ptr [esi+18h],0` | clears the marker after successful key processing |
+| `0x10002DA5` | `0x2DA5` | `mov eax,[esi+40h]` / `call eax` | invokes the record's final materialization callback |
+| `0x10071660` | `0x71660` | `FUN_10071660` (comment-only) | restores `opcodes`, `last`, and `desc[15]` from the loader descriptor |
+| `0x10071750` | `0x71750` | `FUN_10071750` (comment-only) | lazy execution wrapper around materialization, restore, static variables, and VM entry |
+| `0x10073900` | `0x73900` | `FUN_10073900` | loader VM-loop entry used by the capture hook |
 
-`sub_10071750` confirms the ordering that matters to the fix. It checks the odd
-or sentinel `op_array->opcodes` value, calls `sub_10002C50`, then calls
-`sub_10071660`. Before entering `sub_1006FF10`, it reads the static-variables
+`FUN_10071750` confirms the ordering that matters to the fix. It checks the odd
+or sentinel `op_array->opcodes` value, calls `FUN_10002C30`, then calls
+`FUN_10071660`. Before entering `FUN_10073900`, it reads the static-variables
 field at `op_array + 0x38` and follows either the direct pointer or `MAP_PTR`
 path. This is why the dumper must install a temporary valid `+0x38` value before
 driving a dynamic-key target and restore it afterward.
 
-Inside `sub_10002C50`, the record is reached through
+Inside `FUN_10002C30`, the record is reached through
 `op_array->reserved[3] -> desc[19]`. The byte at `record + 0x18` selects the
 additional dynamic-key branch; after that branch succeeds, the loader clears
 the byte and calls the callback stored at `record + 0x40`. These observations
@@ -1601,8 +1601,8 @@ An empty result means that every exported target is in range.
 | `OPCODEDUMP_MATERIALIZE_MAIN=1` | materialize `{main}` directly |
 | `OPCODEDUMP_DISABLE_MAIN_MATERIALIZE=1` | skip direct `{main}` materialization |
 | `OPCODEDUMP_DISABLE_VM_LOOP_HOOK=1` | disable VM-entry snapshot hook |
-| `OPCODEDUMP_DISABLE_OPCODE_CAPTURE_HOOK=1` | disable capture at RVA `0x9BD20` |
-| `OPCODEDUMP_DISABLE_OPCODE_SETTER_HOOK=1` | disable setter hook at RVA `0x701D0` |
+| `OPCODEDUMP_DISABLE_OPCODE_CAPTURE_HOOK=1` | disable capture at RVA `0x739E4` |
+| `OPCODEDUMP_DISABLE_OPCODE_SETTER_HOOK=1` | disable setter hook at RVA `0x73BD0` |
 | `OPCODEDUMP_CAPTURE_DESCRIPTOR_DUMP=1` | export descriptor-observed entries |
 | `OPCODEDUMP_CAPTURE_ALL_INTERNAL=1` | record all internal calls, not only ionCube APIs |
 | `OPCODEDUMP_CAPTURE_FILE=<path>` | identify a target file in internal-call logging |
