@@ -1,4 +1,4 @@
-# PHP 8.1 ionCube Opcode Dumper
+# ionCube 15.5.1 Opcode Dumper (PHP 8.5 Loader)
 
 This repository contains a Windows x86 PHP extension and a PHP-side export
 pipeline that captures complete Zend opcode arrays from ionCube-encoded PHP
@@ -7,9 +7,9 @@ files.
 The implementation is intentionally tied to the exact runtime bundled in this
 repository:
 
-- PHP 8.1.34 NTS, Visual C++ 2019, x86
-- Zend Engine 4.1.34
-- ionCube PHP Loader 15.5.0
+- PHP 8.5 (NTS), Visual C++ 2019 (VS16), x86
+- Zend Engine 8.5
+- ionCube PHP Loader 15.5.1
 - `runtime/ext/ioncube_loader_win_8.1.dll`
 - `runtime/ext/php_opcodedump.dll`
 
@@ -31,8 +31,8 @@ The loader-specific RVAs documented below were identified in:
 
 ```text
 runtime/ext/ioncube_loader_win_8.1.dll
-ionCube PHP Loader 15.5.0
-SHA-256: 6C0CD1F063E5C3526946CA5898D7977C4A7F21242DC7A76CA96879D92838DD6B
+ionCube PHP Loader 15.5.1 15.5.0
+SHA-256: 0954297f4299fbcc2dcbcf0e26e4d9fd90aa54b2bada662e02983a6d1200cdef
 ```
 
 The loader filename alone is not sufficient to identify the analyzed build.
@@ -418,12 +418,12 @@ The decisive register states were:
 
 | IDA location | Register or stack value | Meaning |
 |---|---|---|
-| `0x10002C50` | `ECX` | encoded `zend_op_array *` passed to the direct materializer |
+| `0x10002C40` | `ECX` | encoded `zend_op_array *` passed to the direct materializer |
 | `0x1009BD20` | `CH` | real Zend opcode byte being materialized |
 | `0x1009BD20` | `[ESP+0x2C]` | current transient `zend_op *` |
-| `0x100701D0` | `ECX` | current `zend_op *` passed to the handler setter |
-| `0x100701D0` | `DL` | real Zend opcode passed to the handler setter |
-| `0x1006FF10` | `ECX` | `zend_execute_data *` at loader VM entry |
+| `0x10070100` | `ECX` | current `zend_op *` passed to the handler setter |
+| `0x10070100` | `DL` | real Zend opcode passed to the handler setter |
+| `0x1006FDC0` | `ECX` | `zend_execute_data *` at loader VM entry |
 
 This register-level agreement between caller, callee, and dispatch loop is what
 made the hook locations authoritative. A byte pattern alone was not treated as
@@ -739,10 +739,10 @@ The main hooks are:
 
 | Hook | RVA | Purpose |
 |---|---:|---|
-| Descriptor preprocessing | `0x6CE45` | observe module function/class entries |
+| Descriptor preprocessing | `0x6CB90` | observe module function/class entries |
 | Materializer opcode loop | `0x9BD20` | capture `(zend_op *, real opcode)` |
-| Direct opcode setter | `0x701D0` | capture setter calls and provide handler oracle |
-| Loader VM loop | `0x6FF10` | snapshot a fully materialized function and skip its body |
+| Direct opcode setter | `0x7100` | capture setter calls and provide handler oracle |
+| Loader VM loop | `0x6FDC0` | snapshot a fully materialized function and skip its body |
 
 Hook installation follows this pattern:
 

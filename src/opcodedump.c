@@ -1,17 +1,17 @@
 /*
   +----------------------------------------------------------------------+
-  | opcodedump extension - PHP 8.1 ionCube opcode dumper (x86)           |
+  | opcodedump extension - ionCube 15.5.1 opcode dumper (x86)            |
   +----------------------------------------------------------------------+
-  | Target PHP    : 8.1.x NTS Win32 VS16 x86                             |
+  | Target PHP    : 8.5 NTS Win32 VS16 x86                               |
   | Target loader : ioncube_loader_win_8.1.dll                           |
-  |                 (ioncube_loader_15.5_8.1.0_nonts.dll, ImageBase       |
+  |                 (ionCube PHP Loader 15.5.1, ImageBase                |
   |                  0x10000000 typical; verify in IDA)                   |
   |                                                                      |
-  | Loader RVAs (binary analysis of the 8.1 loader, used at runtime):    |
-  |   IC_VM_LOOP_RVA     = 0x6FF10  (sub_1006FF10: loader VM dispatch)   |
+  | Loader RVAs (binary analysis of ionCube 15.5.1, used at runtime):   |
+  |   IC_VM_LOOP_RVA     = 0x6FDC0  (FUN_1006FDC0: loader VM dispatch)   |
   |   IC_REQUEST_KEY_RVA = 0xB01C8  (dword_101B01C8: per-request XOR key) |
   |                                                                      |
-  | PHP 8.1 zend_op_array x86 offsets:                                   |
+  | ionCube 15.5.1 zend_op_array x86 offsets:                            |
   |   [+0x30]=last  [+0x34]=opcodes*  [+0x5C]=filename* (XOR key salt)   |
   |   [+0x64]=line_end (encode marker bit 0x400000)                      |
   |   [+0x88]=reserved[3] (ionCube descriptor pointer)                   |
@@ -588,19 +588,19 @@ static void dasm_add_cv_name(zval *dst, const char *key,
  * ============================================================ */
 #ifdef PHP_WIN32
 #ifndef IC_KEY_TABLE_RVA
-#define IC_KEY_TABLE_RVA   0u  /* legacy = 0x1A128C; not re-located for 8.1 v15.5 (advanced literal pass disabled) */
+#define IC_KEY_TABLE_RVA   0u  /* legacy = 0x1A128C; not re-located for 15.5.1 (advanced literal pass disabled) */
 #endif
 #ifndef IC_REQUEST_KEY_RVA
-#define IC_REQUEST_KEY_RVA 0xB01C8u  /* 8.1 v15.5: dword_101B01C8 (per-request XOR key) */
+#define IC_REQUEST_KEY_RVA 0xB01C8u  /* 15.5.1: dword_101B01C8 (per-request XOR key) */
 #endif
 #ifndef IC_STEP1_RVA
-#define IC_STEP1_RVA 0x2C50u  /* sub_10002C50: materialize an encoded op_array body */
+#define IC_STEP1_RVA 0x2C40u  /* FUN_10002C40: materialize an encoded op_array body (15.5.1) */
 #endif
 #ifndef IC_OPCODE_SETTER_RVA
-#define IC_OPCODE_SETTER_RVA 0x701D0u
+#define IC_OPCODE_SETTER_RVA 0x7100u  /* FUN_10070100: handler opcode setter (15.5.1) */
 #endif
 #ifndef IC_DESCRIPTOR_PREPROCESS_PATCH_RVA
-#define IC_DESCRIPTOR_PREPROCESS_PATCH_RVA 0x6CE45u
+#define IC_DESCRIPTOR_PREPROCESS_PATCH_RVA 0x6CB90u  /* FUN_1006CB90: descriptor preprocess (15.5.1) */
 #endif
 #define IC_DESC_MAP_MAX 4096
 #define OPCODEDUMP_DESCRIPTOR_SAVE_MAX 512
@@ -847,7 +847,7 @@ static void opcodedump_apply_captured_opcodes_to_copy(zend_op_array *copy,
 /* step1 materializes opcodes/literals into transient loader memory that is freed
  * shortly after the call returns, so a later serialization pass reads freed
  * pages. Deep-copy both arrays into stable process memory and rebase the
- * intra-array absolute pointers (x86 PHP 8.1 uses ZEND_USE_ABS_JMP/CONST_ADDR:
+ * intra-array absolute pointers (x86 PHP 8.5 uses ZEND_USE_ABS_JMP/CONST_ADDR:
  * jump targets point into opcodes, IS_CONST operands point into literals).
  * The copies intentionally outlive the request (one-shot dump process). */
 static void ic_deep_copy_op_array_body(zend_op_array *copy)
@@ -1492,7 +1492,7 @@ static zend_uchar dasm_ic_display_opcode(const zend_op_array *op_array, const ze
                                           zend_uchar opcode)
 {
 	zend_uchar decoded = opcode;
-	/* PHP 8.1 / loader v15.5: ionCube's VM dispatches via the (decrypted) handler
+	/* PHP 8.5 / loader v15.5.1: ionCube's VM dispatches via the (decrypted) handler
 	 * and stores a PERMUTED value in opline->opcode. When the snapshot has
 	 * recovered the real php8.dll handler, map it back to the true opcode. This
 	 * also works for naturally-plaintext op_arrays (e.g. {main}). */
@@ -2807,7 +2807,7 @@ void dasm_zend_op_array(zval *dst, const zend_op_array *src)
 				if (_hLoader &&
 				    dasm_ic_committed_readable_ptr((const void *)((uintptr_t)_hLoader + IC_REQUEST_KEY_RVA))) {
 					uint32_t _request_key = *(const uint32_t *)((uintptr_t)_hLoader + IC_REQUEST_KEY_RVA);
-					uint32_t _key_salt = *(const uint32_t *)((const char *)src + 0x5C); /* PHP 8.1: filename* bits */
+					uint32_t _key_salt = *(const uint32_t *)((const char *)src + 0x5C); /* PHP 8.5: filename* bits */
 					uint32_t _restore_key = _request_key + _key_salt + _desc[17];
 					_decoded = _desc[5] ^ _restore_key;
 				}
@@ -2815,7 +2815,7 @@ void dasm_zend_op_array(zval *dst, const zend_op_array *src)
 					_ic_fixup = *src;
 					_ic_fixup.opcodes = (zend_op *)(uintptr_t)_decoded;
 					if (_desc[27] > 0 && _desc[27] < 65536) _ic_fixup.last = _desc[27];
-					_ic_fixup.line_end &= ~0x400000u; /* PHP 8.1: encode marker lives in line_end (+0x64) */
+					_ic_fixup.line_end &= ~0x400000u; /* PHP 8.5: encode marker lives in line_end (+0x64) */
 					src = &_ic_fixup;
 				}
 			}
@@ -3294,7 +3294,7 @@ void dasm_zend_op_array(zval *dst, const zend_op_array *src)
 /* ============================================================
  * ionCube force-decode  (Windows only)
  * ============================================================
- * PHP 8.1 loader (ioncube_loader_win_8.1.dll) - confirmed by binary analysis.
+ * PHP 8.5 loader (ioncube_loader_win_8.1.dll) - confirmed by binary analysis.
  * At encode time ionCube:
  *    - XOR-encodes op_array->opcodes into descriptor[5]
  *    - replaces opcodes with a small odd sentinel
@@ -3636,10 +3636,10 @@ static int opcodedump_install_opcode_capture_hook(void)
 	return 1;
 }
 
-/* Direct setter hook: sub_100701D0(ecx=zend_op*, dl=real_opcode). This catches
+/* Direct setter hook: sub_10070100(ecx=zend_op*, dl=real_opcode). This catches
  * materialization paths that do not pass through the 0x9BD20 loop probe. */
 #ifndef IC_OPCODE_SETTER_RVA
-#define IC_OPCODE_SETTER_RVA 0x701D0u
+#define IC_OPCODE_SETTER_RVA 0x7100u
 #endif
 static unsigned char *opcodedump_opcode_setter_target = NULL;
 static unsigned char opcodedump_opcode_setter_original[5];
@@ -3703,14 +3703,14 @@ static int opcodedump_install_opcode_setter_hook(void)
 /* ============================================================
  * Runtime opcode capture (ionCube VM dispatch detour)
  * ============================================================
- * The v15.5/8.1 loader executes encoded user functions through its OWN VM loop
- * (sub_1006FF10), bypassing zend_execute_ex entirely, and only materializes the
+ * The v15.5/8.5 loader executes encoded user functions through its OWN VM loop
+ * (sub_1006FDC0), bypassing zend_execute_ex entirely, and only materializes the
  * decrypted opcode stream during that dispatch. We detour the VM loop entry: at
  * that point op_array->opcodes (and desc[15]) hold the decrypted opcodes
  * (plaintext operands; handlers are still XOR-encrypted, which the dump does not
  * need). We snapshot there so the body never has to complete. */
 #ifndef IC_VM_LOOP_RVA
-#define IC_VM_LOOP_RVA 0x6FF10u
+#define IC_VM_LOOP_RVA 0x6FDC0u
 #endif
 static unsigned char *opcodedump_vm_loop_target = NULL;
 static unsigned char opcodedump_vm_loop_original[6];
@@ -4927,7 +4927,7 @@ PHP_FUNCTION(dasm_file)
 
 			/* Runtime materialization: drive every encoded function through the
 			 * loader VM so the dispatch detour snapshots its decrypted opcodes.
-			 * This is the reliable path for v15.5/8.1 (standalone step1 only yields
+			 * This is the reliable path for v15.5.1/8.5 (standalone step1 only yields
 			 * an encrypted intermediate). It must run INSTEAD of ic_force_decode,
 			 * which would otherwise overwrite op_array->opcodes and make the
 			 * functions uncallable. */

@@ -1,17 +1,18 @@
 @echo off
 setlocal
 :: ----------------------------------------------------------------
-:: build.bat  --  compile php_opcodedump.dll  (PHP 8.1 NTS x86 VS16)
+:: build.bat  --  compile php_opcodedump.dll  (PHP 8.5 NTS x86 VS16)
+::                ionCube PHP Loader 15.5.1
 ::
 :: Requirements:
 ::   1. Visual Studio 2019 Build Tools (VS16 / MSVC 14.2x) x86 native tools
-::   2. PHP 8.1.34 NTS x86 devel pack extracted to:
-::      build\devel\php-8.1.34-devel-vs16-x86\
+::   2. PHP 8.5 NTS x86 devel pack extracted to:
+::      build\devel\php-8.5-devel-vs16-x86\
 :: ----------------------------------------------------------------
 set SCRIPT_DIR=%~dp0
 set SRC=%SCRIPT_DIR%..\src
 set OUT=%SCRIPT_DIR%out
-set DEVEL=%SCRIPT_DIR%devel\php-8.1.34-devel-vs16-x86
+set DEVEL=%SCRIPT_DIR%devel\php-8.5-devel-vs16-x86
 set PHP_INC=%DEVEL%\include
 
 if not exist "%PHP_INC%\main\php.h" (
